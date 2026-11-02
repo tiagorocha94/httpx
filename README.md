@@ -34,6 +34,11 @@ There is no supported usage example yet.
 
 ## Development
 
-The project's development and CI workflow is being established. Once available,
-the documented local checks will be kept aligned with the checks run for GitHub
-pull requests.
+The project uses GNU Make to provide consistent local checks:
+
+```sh
+make check
+```
+
+See [Development](docs/DEVELOPMENT.md) for prerequisites and available targets,
+and [CI](docs/CI.md) for the GitHub Actions and branch protection workflow.
