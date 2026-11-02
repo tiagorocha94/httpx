@@ -9,9 +9,9 @@ standard Go request and response behavior.
 
 ## Status
 
-HTTPX is in its initial development stage. The repository does not yet provide
-a usable client API. Features described here are project goals, not available
-functionality.
+HTTPX is in early development. It currently provides a configurable HTTP
+client with timeout and transport injection. Middleware, retries, resilience
+policies, and observability are planned but not yet implemented.
 
 ## Intended scope
 
@@ -29,8 +29,47 @@ scope.
 
 ## Quickstart
 
-A working quickstart will be added when the initial client API is implemented.
-There is no supported usage example yet.
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/tiagorocha94/httpx"
+)
+
+func main() {
+	client, err := httpx.New(
+		httpx.WithTimeout(10*time.Second),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	request, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"https://example.com",
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	response, err := client.Do(request)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer response.Body.Close()
+}
+```
+
+The client follows standard `net/http` behavior: non-2xx statuses are
+responses, not transport errors, and the caller owns the response body. See
+[Configuration](docs/CONFIGURATION.md) for transport options and defaults.
 
 ## Development
 
