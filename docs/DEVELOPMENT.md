@@ -4,7 +4,8 @@
 
 - The Go version declared in `go.mod`.
 - GNU Make 4 or later.
-- `golangci-lint` v2.15.0 for lint checks.
+- `golangci-lint` v2.15.0 for lint checks. Keep this version aligned with
+  `GOLANGCI_LINT_VERSION` in the GitHub Actions workflow.
 - A C toolchain and `CGO_ENABLED=1` to run race tests. When cgo is disabled,
   `make check` reports that race tests were skipped.
 
