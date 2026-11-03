@@ -10,15 +10,16 @@ standard Go request and response behavior.
 ## Status
 
 HTTPX is in early development. It currently provides a configurable HTTP
-client with timeout and transport injection. Middleware, retries, resilience
-policies, and observability are planned but not yet implemented.
+client with timeout, transport injection, and logical-operation middleware.
+Retries, resilience policies, and observability are planned but not yet
+implemented.
 
 ## Intended scope
 
 The library is intended to provide:
 
 - A configurable HTTP client compatible with Go's `net/http` conventions.
-- Composable middleware and request lifecycle hooks.
+- Composable logical-operation middleware and request lifecycle hooks.
 - Opt-in resilience policies such as retries, circuit breaking, rate limiting,
   and concurrency limits.
 - Structured logging and optional metrics and tracing integrations.
@@ -70,6 +71,8 @@ func main() {
 The client follows standard `net/http` behavior: non-2xx statuses are
 responses, not transport errors, and the caller owns the response body. See
 [Configuration](docs/CONFIGURATION.md) for transport options and defaults.
+See [Execution](docs/EXECUTION.md) for middleware composition, operation
+boundaries, attempts, and context behavior.
 
 ## Development
 
