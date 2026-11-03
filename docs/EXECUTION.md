@@ -13,8 +13,14 @@ not invoke the logical middleware chain again. Each underlying
 multiple attempts. Operation and attempt state is private and is not exposed
 through the public API.
 
-Retries are not implemented. Middleware is invoked once per `Client.Do` call
-and must not call its next handler more than once.
+Retries are disabled by default. When enabled with `WithRetry`, retry policy
+wraps `http.Client.Do` inside the configured middleware chain. Middleware runs
+once per public `Client.Do`; each retry re-executes the original request,
+including any redirects. `RetryConfig.MaxAttempts` counts these complete
+executions, including the initial one. Attempt hooks still run for every
+individual transport exchange, so redirects and retries can produce more
+attempt-hook events than `MaxAttempts`. See [Retries](RETRIES.md) for
+eligibility, request replay, and response cleanup details.
 
 ## Middleware composition
 
@@ -87,8 +93,7 @@ context error.
 
 ## Policy ordering
 
-The logical middleware chain currently wraps `http.Client.Do`. Future
-operation-level policies such as retries should be placed inside operation
-observability and outside attempt-level policies. Attempt-level controls such
-as rate limiting should apply to each transport attempt. No resilience policy
-is currently enabled or implied by middleware ordering.
+The logical middleware chain wraps retry execution, and operation hooks wrap
+the complete middleware chain. Attempt-level hooks observe each transport
+exchange inside retries and redirects. Attempt-level controls such as rate
+limiting should apply to each transport attempt.

@@ -11,8 +11,9 @@ standard Go request and response behavior.
 
 HTTPX is in early development. It currently provides a configurable HTTP
 client with timeout, transport injection, logical-operation middleware,
-request IDs, and lifecycle hooks. Retries, resilience policies, and integrated
-observability are planned but not yet implemented.
+request IDs, lifecycle hooks, and opt-in retries. Circuit breaking, rate
+limiting, bulkheads, and integrated observability are planned but not yet
+implemented.
 
 ## Intended scope
 
@@ -86,7 +87,20 @@ responses, not transport errors, and the caller owns the response body. See
 [Configuration](docs/CONFIGURATION.md) for transport options and defaults.
 See [Execution](docs/EXECUTION.md) for middleware composition, operation
 boundaries, attempts, and context behavior. See [Hooks](docs/HOOKS.md) for
-request IDs and operation/attempt lifecycle callbacks.
+request IDs and operation/attempt lifecycle callbacks. See [Retries](docs/RETRIES.md)
+for retry eligibility, replay safety, and backoff.
+
+Retries are opt-in and limited to idempotent methods with replayable bodies:
+
+```go
+client, err := httpx.New(httpx.WithRetry(httpx.RetryConfig{
+	MaxAttempts: 3,
+}))
+```
+
+Non-idempotent methods such as POST are never automatically retried. See
+[Retries](docs/RETRIES.md) for defaults, backoff configuration, and replay
+limitations.
 
 ## Development
 
