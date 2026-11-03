@@ -10,7 +10,7 @@ fmt:
 	$(GO) fmt $(GO_PACKAGES)
 
 fmt-check:
-	$(GO) run ./internal/checkfmt
+	$(if $(shell gofmt -l .),$(error Go files need formatting; run 'make fmt'),@echo All Go files are gofmt formatted)
 
 test:
 	$(GO) test $(GO_PACKAGES)
