@@ -93,7 +93,11 @@ context error.
 
 ## Policy ordering
 
-The logical middleware chain wraps retry execution, and operation hooks wrap
-the complete middleware chain. Attempt-level hooks observe each transport
-exchange inside retries and redirects. Attempt-level controls such as rate
-limiting should apply to each transport attempt.
+The logical middleware chain wraps the circuit breaker, which wraps retry
+execution. The breaker admits or rejects once per logical operation and
+classifies only the final result after retries are complete. A retryable
+failure followed by success is counted as a successful operation. Operation
+hooks wrap the middleware chain, while attempt hooks observe each transport
+exchange inside retries and redirects. Future attempt-level controls such as
+rate limiting should apply to each transport attempt; their rejections must
+not be counted as downstream failures by the breaker.

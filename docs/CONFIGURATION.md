@@ -40,9 +40,12 @@ Use individual options for common settings:
   corresponding fields.
 - `WithRetry` opts in to bounded retries. Retries are disabled by default;
   see [Retries](RETRIES.md) for defaults and replay-safety rules.
+- `WithCircuitBreaker` opts in to a circuit breaker. It observes one complete
+  logical operation, including configured retries; see
+  [Circuit breaker](CIRCUIT_BREAKER.md) for defaults and state behavior.
 
-Invalid combinations and negative timeouts return an error matching
-`httpx.ErrInvalidConfig`.
+Invalid combinations, policy settings, and negative timeouts return an error
+matching `httpx.ErrInvalidConfig`.
 
 ## Defaults and ownership
 

@@ -60,4 +60,7 @@ Middleware runs once around all retry executions. Operation hooks run once for
 the logical operation. Attempt hooks observe every underlying
 `RoundTripper.RoundTrip`, including redirects inside each retry execution.
 Thus the number of attempt-hook events can exceed `MaxAttempts` when redirects
-occur.
+occur. When a circuit breaker is enabled, it wraps retry execution and counts
+one final outcome per logical operation; intermediate retry failures do not
+trip it if the final outcome is classified as success. See
+[Circuit breaker](CIRCUIT_BREAKER.md) for the full policy ordering.
