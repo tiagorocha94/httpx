@@ -25,8 +25,8 @@ Run all repository checks:
 make check
 ```
 
-This checks Go formatting, runs unit tests and `go vet`, runs
-`golangci-lint`, and runs race-enabled tests when cgo is enabled.
+This checks Go formatting with the Go toolchain's `gofmt`, runs unit tests and
+`go vet`, runs `golangci-lint`, and runs race-enabled tests when cgo is enabled.
 
 To run an individual check:
 
