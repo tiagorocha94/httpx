@@ -24,6 +24,11 @@ type Config struct {
 	Transport    *http.Transport
 	RoundTripper http.RoundTripper
 	Middleware   []Middleware
+	// RequestIDHeader is the header used for operation IDs. It defaults to
+	// "X-Request-ID".
+	RequestIDHeader string
+	// Hooks contains the callbacks used to observe operations and attempts.
+	Hooks Hooks
 }
 
 // Option configures a Client.
@@ -34,9 +39,11 @@ type Option func(*Config) error
 // A Client is safe for concurrent use. Its final response body belongs to the
 // caller and must be closed by the caller.
 type Client struct {
-	client  *http.Client
-	doer    HTTPDoer
-	timeout time.Duration
+	client          *http.Client
+	doer            HTTPDoer
+	timeout         time.Duration
+	requestIDHeader string
+	hooks           Hooks
 }
 
 // New constructs a Client using the supplied options.
@@ -58,6 +65,11 @@ func New(options ...Option) (*Client, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
+	if config.RequestIDHeader == "" {
+		config.RequestIDHeader = defaultRequestIDHeader
+	} else {
+		config.RequestIDHeader = http.CanonicalHeaderKey(config.RequestIDHeader)
+	}
 
 	roundTripper, err := config.roundTripper()
 	if err != nil {
@@ -74,9 +86,11 @@ func New(options ...Option) (*Client, error) {
 	}
 
 	return &Client{
-		client:  httpClient,
-		doer:    doer,
-		timeout: config.Timeout,
+		client:          httpClient,
+		doer:            doer,
+		timeout:         config.Timeout,
+		requestIDHeader: config.RequestIDHeader,
+		hooks:           config.Hooks,
 	}, nil
 }
 
@@ -87,7 +101,17 @@ func (c *Client) Do(request *http.Request) (*http.Response, error) {
 		return c.client.Do(nil)
 	}
 
-	operation := &operationState{startedAt: time.Now()}
+	requestID, err := requestIDFor(request, c.requestIDHeader)
+	if err != nil {
+		return nil, err
+	}
+	operation := &operationState{
+		startedAt:       time.Now(),
+		requestID:       requestID,
+		requestIDHeader: c.requestIDHeader,
+		hooks:           c.hooks,
+		event:           operationEvent(request, requestID),
+	}
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if c.timeout > 0 {
@@ -97,10 +121,20 @@ func (c *Client) Do(request *http.Request) (*http.Response, error) {
 	}
 	ctx = context.WithValue(ctx, operationContextKey{}, operation)
 	clonedRequest := request.Clone(ctx)
+	if clonedRequest.Header == nil {
+		clonedRequest.Header = make(http.Header)
+	}
+	if requestID != "" {
+		clonedRequest.Header.Set(operation.requestIDHeader, requestID)
+	}
 
+	if operation.hooks.BeforeOperation != nil {
+		operation.hooks.BeforeOperation(operation.event)
+	}
 	response, err := c.doer.Do(clonedRequest)
 	if err != nil {
 		cancel()
+		operation.finish(response, err)
 		return response, err
 	}
 	if ctx.Err() != nil {
@@ -110,20 +144,27 @@ func (c *Client) Do(request *http.Request) (*http.Response, error) {
 		}
 		cancel()
 		if closeErr != nil {
-			return nil, errors.Join(ctx.Err(), closeErr)
+			err = errors.Join(ctx.Err(), closeErr)
+			operation.finish(response, err)
+			return nil, err
 		}
-		return nil, ctx.Err()
+		err = ctx.Err()
+		operation.finish(response, err)
+		return nil, err
 	}
 	if response == nil {
 		cancel()
+		operation.finish(nil, ErrInvalidResponse)
 		return nil, ErrInvalidResponse
 	}
 	if response.Body == nil {
 		cancel()
+		operation.finish(response, ErrInvalidResponse)
 		return nil, ErrInvalidResponse
 	}
 	if response.Body == http.NoBody {
 		cancel()
+		operation.finish(response, nil)
 		return response, nil
 	}
 	response.Body = &operationBody{
@@ -131,6 +172,7 @@ func (c *Client) Do(request *http.Request) (*http.Response, error) {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+	operation.finish(response, nil)
 	return response, nil
 }
 
@@ -146,6 +188,19 @@ func WithConfig(config Config) Option {
 	return func(current *Config) error {
 		*current = config
 		current.Middleware = append([]Middleware(nil), config.Middleware...)
+		return nil
+	}
+}
+
+// WithRequestIDHeader sets the header used to carry a logical operation's
+// request ID. The default is "X-Request-ID". An existing non-empty value on
+// the request is preserved; otherwise HTTPX generates an ID.
+func WithRequestIDHeader(name string) Option {
+	return func(config *Config) error {
+		if !validHeaderName(name) {
+			return fmt.Errorf("request ID header name %q is invalid", name)
+		}
+		config.RequestIDHeader = name
 		return nil
 	}
 }
@@ -195,6 +250,9 @@ func (config Config) validate() error {
 	}
 	if config.Transport != nil && config.RoundTripper != nil {
 		return fmt.Errorf("%w: transport and round tripper are mutually exclusive", ErrInvalidConfig)
+	}
+	if config.RequestIDHeader != "" && !validHeaderName(config.RequestIDHeader) {
+		return fmt.Errorf("%w: request ID header name %q is invalid", ErrInvalidConfig, config.RequestIDHeader)
 	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {

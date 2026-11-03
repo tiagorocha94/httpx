@@ -10,9 +10,9 @@ standard Go request and response behavior.
 ## Status
 
 HTTPX is in early development. It currently provides a configurable HTTP
-client with timeout, transport injection, and logical-operation middleware.
-Retries, resilience policies, and observability are planned but not yet
-implemented.
+client with timeout, transport injection, logical-operation middleware,
+request IDs, and lifecycle hooks. Retries, resilience policies, and integrated
+observability are planned but not yet implemented.
 
 ## Intended scope
 
@@ -45,6 +45,19 @@ import (
 func main() {
 	client, err := httpx.New(
 		httpx.WithTimeout(10*time.Second),
+		httpx.WithRequestIDHeader("X-Correlation-ID"),
+		httpx.WithHooks(httpx.Hooks{
+			AfterOperation: func(result httpx.OperationResult) {
+				log.Printf(
+					"HTTP %s request_id=%s status=%d duration=%s err=%v",
+					result.Method,
+					result.RequestID,
+					result.StatusCode,
+					result.Duration,
+					result.Err,
+				)
+			},
+		}),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -72,7 +85,8 @@ The client follows standard `net/http` behavior: non-2xx statuses are
 responses, not transport errors, and the caller owns the response body. See
 [Configuration](docs/CONFIGURATION.md) for transport options and defaults.
 See [Execution](docs/EXECUTION.md) for middleware composition, operation
-boundaries, attempts, and context behavior.
+boundaries, attempts, and context behavior. See [Hooks](docs/HOOKS.md) for
+request IDs and operation/attempt lifecycle callbacks.
 
 ## Development
 
