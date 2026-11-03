@@ -24,9 +24,11 @@ close the final response body.
 
 Use individual options for common settings:
 
-- `WithTimeout` sets the `http.Client` timeout for the complete request,
-  including redirects and response-body reading. Zero disables the
-  client-level timeout; negative durations are invalid.
+- `WithTimeout` sets the maximum duration for a logical operation, including
+  middleware, redirects, and response-body reading. Zero disables the
+  client-level timeout; negative durations are invalid. Middleware and custom
+  transports must honor the request context for the timeout to interrupt
+  their work.
 - `WithTransport` accepts an `*http.Transport`. HTTPX clones it during client
   construction, so later changes to the supplied transport do not reconfigure
   the client. Configure connection pooling, TLS, proxy behavior, dialing, and
@@ -59,11 +61,14 @@ client-level timeout. Standard transport defaults are inherited by cloning
 ## Timeouts and request context
 
 The request's context remains authoritative for cancellation and deadlines.
-The configured client timeout is an additional upper bound across redirects
-and response reading. The earlier of the request context deadline and the
-client timeout applies.
+The configured client timeout is an additional upper bound across middleware,
+redirects, and response reading. The earlier of the request context deadline
+and the client timeout applies. The derived operation context remains active
+until the response body is closed or reaches EOF.
 
 Use `http.NewRequestWithContext` (or `request.WithContext`) to associate
 cancellation or a request-specific deadline with an operation.
 An injected custom `RoundTripper` is responsible for respecting the request
-context, as required by the `net/http` contract.
+context, as required by the `net/http` contract. If it returns a response body
+that can block while reading, that body must also honor the request context.
+See [Execution](EXECUTION.md) for the middleware contract.

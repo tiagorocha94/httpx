@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,9 @@ import (
 )
 
 var ErrInvalidConfig = errors.New("httpx: invalid configuration")
+
+// ErrInvalidResponse indicates that middleware returned an invalid response.
+var ErrInvalidResponse = errors.New("httpx: middleware returned an invalid response")
 
 // Config contains immutable settings used to construct a Client.
 //
@@ -19,6 +23,7 @@ type Config struct {
 	Timeout      time.Duration
 	Transport    *http.Transport
 	RoundTripper http.RoundTripper
+	Middleware   []Middleware
 }
 
 // Option configures a Client.
@@ -29,7 +34,9 @@ type Option func(*Config) error
 // A Client is safe for concurrent use. Its final response body belongs to the
 // caller and must be closed by the caller.
 type Client struct {
-	client *http.Client
+	client  *http.Client
+	doer    HTTPDoer
+	timeout time.Duration
 }
 
 // New constructs a Client using the supplied options.
@@ -57,18 +64,74 @@ func New(options ...Option) (*Client, error) {
 		return nil, err
 	}
 
+	attemptTransport := &operationRoundTripper{next: roundTripper}
+	httpClient := &http.Client{
+		Transport: attemptTransport,
+	}
+	doer, err := config.operationDoer(httpClient)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
-		client: &http.Client{
-			Timeout:   config.Timeout,
-			Transport: roundTripper,
-		},
+		client:  httpClient,
+		doer:    doer,
+		timeout: config.Timeout,
 	}, nil
 }
 
 // Do sends the request and returns the response using net/http client
 // semantics. It does not interpret HTTP status codes as errors.
 func (c *Client) Do(request *http.Request) (*http.Response, error) {
-	return c.client.Do(request)
+	if request == nil {
+		return c.client.Do(nil)
+	}
+
+	operation := &operationState{startedAt: time.Now()}
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if c.timeout > 0 {
+		ctx, cancel = context.WithTimeout(request.Context(), c.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(request.Context())
+	}
+	ctx = context.WithValue(ctx, operationContextKey{}, operation)
+	clonedRequest := request.Clone(ctx)
+
+	response, err := c.doer.Do(clonedRequest)
+	if err != nil {
+		cancel()
+		return response, err
+	}
+	if ctx.Err() != nil {
+		var closeErr error
+		if response != nil && response.Body != nil {
+			closeErr = response.Body.Close()
+		}
+		cancel()
+		if closeErr != nil {
+			return nil, errors.Join(ctx.Err(), closeErr)
+		}
+		return nil, ctx.Err()
+	}
+	if response == nil {
+		cancel()
+		return nil, ErrInvalidResponse
+	}
+	if response.Body == nil {
+		cancel()
+		return nil, ErrInvalidResponse
+	}
+	if response.Body == http.NoBody {
+		cancel()
+		return response, nil
+	}
+	response.Body = &operationBody{
+		body:   response.Body,
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	return response, nil
 }
 
 // CloseIdleConnections closes idle connections held by the underlying
@@ -82,13 +145,15 @@ func (c *Client) CloseIdleConnections() {
 func WithConfig(config Config) Option {
 	return func(current *Config) error {
 		*current = config
+		current.Middleware = append([]Middleware(nil), config.Middleware...)
 		return nil
 	}
 }
 
-// WithTimeout sets the maximum duration for a complete request, including
-// redirects and reading the response body. A zero timeout disables this
-// client-level limit; negative values are invalid.
+// WithTimeout sets the maximum duration for a logical operation, including
+// redirects, middleware, and reading the response body. Middleware must honor
+// the request context for the timeout to interrupt its work. A zero timeout
+// disables this client-level limit; negative values are invalid.
 func WithTimeout(timeout time.Duration) Option {
 	return func(config *Config) error {
 		config.Timeout = timeout
@@ -130,6 +195,11 @@ func (config Config) validate() error {
 	}
 	if config.Transport != nil && config.RoundTripper != nil {
 		return fmt.Errorf("%w: transport and round tripper are mutually exclusive", ErrInvalidConfig)
+	}
+	for i, middleware := range config.Middleware {
+		if middleware == nil {
+			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
+		}
 	}
 	return nil
 }

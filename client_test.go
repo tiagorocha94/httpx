@@ -21,12 +21,12 @@ func TestNewUsesStandardDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.client.Timeout != 0 {
-		t.Fatalf("default timeout = %s, want 0", client.client.Timeout)
+	if client.timeout != 0 {
+		t.Fatalf("default timeout = %s, want 0", client.timeout)
 	}
-	transport, ok := client.client.Transport.(*http.Transport)
+	transport, ok := client.roundTripper().(*http.Transport)
 	if !ok {
-		t.Fatalf("default transport type = %T, want *http.Transport", client.client.Transport)
+		t.Fatalf("default transport type = %T, want *http.Transport", client.roundTripper())
 	}
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok && transport == defaultTransport {
 		t.Fatal("default transport was not cloned")
@@ -87,9 +87,9 @@ func TestNewClonesConfiguredTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok := client.client.Transport.(*http.Transport)
+	got, ok := client.roundTripper().(*http.Transport)
 	if !ok {
-		t.Fatalf("transport type = %T, want *http.Transport", client.client.Transport)
+		t.Fatalf("transport type = %T, want *http.Transport", client.roundTripper())
 	}
 	if got == transport {
 		t.Fatal("client retained caller-owned transport")
@@ -109,8 +109,8 @@ func TestNewUsesUnifiedConfigAndLaterOptionsOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.client.Timeout != 2*time.Second {
-		t.Fatalf("timeout = %s, want 2s", client.client.Timeout)
+	if client.timeout != 2*time.Second {
+		t.Fatalf("timeout = %s, want 2s", client.timeout)
 	}
 }
 
@@ -230,4 +230,12 @@ func (*closeTrackingTransport) RoundTrip(*http.Request) (*http.Response, error) 
 
 func (transport *closeTrackingTransport) CloseIdleConnections() {
 	transport.closed = true
+}
+
+func (client *Client) roundTripper() http.RoundTripper {
+	transport, ok := client.client.Transport.(*operationRoundTripper)
+	if !ok {
+		return client.client.Transport
+	}
+	return transport.next
 }
