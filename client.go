@@ -14,6 +14,10 @@ var ErrInvalidConfig = errors.New("httpx: invalid configuration")
 // ErrInvalidResponse indicates that middleware returned an invalid response.
 var ErrInvalidResponse = errors.New("httpx: middleware returned an invalid response")
 
+// ErrRetryExhausted indicates that a retryable transport error persisted
+// through the configured maximum number of attempts.
+var ErrRetryExhausted = errors.New("httpx: retry attempts exhausted")
+
 // Config contains immutable settings used to construct a Client.
 //
 // Transport is cloned during construction. RoundTripper is used as provided
@@ -29,6 +33,8 @@ type Config struct {
 	RequestIDHeader string
 	// Hooks contains the callbacks used to observe operations and attempts.
 	Hooks Hooks
+	// Retry contains the retry policy. A nil value disables retries.
+	Retry *RetryConfig
 }
 
 // Option configures a Client.
@@ -61,6 +67,7 @@ func New(options ...Option) (*Client, error) {
 			return nil, fmt.Errorf("%w: option %d: %v", ErrInvalidConfig, i, err)
 		}
 	}
+	config.Retry = normalizeRetryConfig(config.Retry)
 
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -76,11 +83,17 @@ func New(options ...Option) (*Client, error) {
 		return nil, err
 	}
 
-	attemptTransport := &operationRoundTripper{next: roundTripper}
 	httpClient := &http.Client{
-		Transport: attemptTransport,
+		Transport: &operationRoundTripper{next: roundTripper},
 	}
-	doer, err := config.operationDoer(httpClient)
+	var doer HTTPDoer = httpClient
+	if config.Retry != nil {
+		doer = &retryDoer{
+			next:   doer,
+			config: *config.Retry,
+		}
+	}
+	doer, err = config.operationDoer(doer)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +201,7 @@ func WithConfig(config Config) Option {
 	return func(current *Config) error {
 		*current = config
 		current.Middleware = append([]Middleware(nil), config.Middleware...)
+		current.Retry = cloneRetryConfig(config.Retry)
 		return nil
 	}
 }
@@ -201,6 +215,16 @@ func WithRequestIDHeader(name string) Option {
 			return fmt.Errorf("request ID header name %q is invalid", name)
 		}
 		config.RequestIDHeader = name
+		return nil
+	}
+}
+
+// WithRetry enables retries using config. MaxAttempts includes the initial
+// execution. Requests are retried only when their method is idempotent and
+// any body can be recreated.
+func WithRetry(config RetryConfig) Option {
+	return func(current *Config) error {
+		current.Retry = normalizeRetryConfig(&config)
 		return nil
 	}
 }
@@ -254,12 +278,25 @@ func (config Config) validate() error {
 	if config.RequestIDHeader != "" && !validHeaderName(config.RequestIDHeader) {
 		return fmt.Errorf("%w: request ID header name %q is invalid", ErrInvalidConfig, config.RequestIDHeader)
 	}
+	if config.Retry != nil {
+		if err := config.Retry.validate(); err != nil {
+			return fmt.Errorf("%w: retry: %v", ErrInvalidConfig, err)
+		}
+	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {
 			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
 		}
 	}
 	return nil
+}
+
+func cloneRetryConfig(config *RetryConfig) *RetryConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
 }
 
 func isNil(value any) bool {

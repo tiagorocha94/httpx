@@ -77,5 +77,7 @@ and must not panic. Callback code should handle `Err` before using result
 fields. The `URL` field can contain user information or sensitive query values;
 redact it before recording.
 
-Retries are not implemented. When available, each retry will be represented as
-an additional attempt within the same logical operation.
+Retries are disabled by default. When enabled, operation hooks still run once
+for the logical operation, while attempt hooks observe every underlying
+transport exchange across retry executions and redirects. See
+[Retries](RETRIES.md) for retry counting and replay rules.

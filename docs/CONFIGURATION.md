@@ -38,6 +38,8 @@ Use individual options for common settings:
   `WithTransport`.
 - `WithConfig` supplies a unified `Config`. Later options override the
   corresponding fields.
+- `WithRetry` opts in to bounded retries. Retries are disabled by default;
+  see [Retries](RETRIES.md) for defaults and replay-safety rules.
 
 Invalid combinations and negative timeouts return an error matching
 `httpx.ErrInvalidConfig`.
@@ -47,7 +49,7 @@ Invalid combinations and negative timeouts return an error matching
 With no transport option, HTTPX clones `http.DefaultTransport` when it is an
 `*http.Transport`. If the standard default has been replaced with another
 `RoundTripper`, that implementation is used as provided. Retries and other
-execution policies are not enabled.
+execution policies are not enabled unless explicitly configured.
 
 Each client owns its cloned transport configuration. Call
 `Client.CloseIdleConnections` when the client is no longer needed or when
