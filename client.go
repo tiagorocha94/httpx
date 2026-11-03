@@ -18,6 +18,10 @@ var ErrInvalidResponse = errors.New("httpx: middleware returned an invalid respo
 // through the configured maximum number of attempts.
 var ErrRetryExhausted = errors.New("httpx: retry attempts exhausted")
 
+// ErrCircuitBreakerOpen indicates that a request was rejected while the
+// circuit breaker was open or its half-open capacity was full.
+var ErrCircuitBreakerOpen = errors.New("httpx: circuit breaker is open")
+
 // Config contains immutable settings used to construct a Client.
 //
 // Transport is cloned during construction. RoundTripper is used as provided
@@ -35,6 +39,8 @@ type Config struct {
 	Hooks Hooks
 	// Retry contains the retry policy. A nil value disables retries.
 	Retry *RetryConfig
+	// CircuitBreaker contains the breaker policy. A nil value disables it.
+	CircuitBreaker *CircuitBreakerConfig
 }
 
 // Option configures a Client.
@@ -56,7 +62,7 @@ type Client struct {
 //
 // The default transport is cloned from http.DefaultTransport when it is an
 // *http.Transport, so the Client owns an independently configured transport.
-// Retries and other execution policies are not enabled by default.
+// Retry and circuit-breaker policies are disabled by default.
 func New(options ...Option) (*Client, error) {
 	config := Config{}
 	for i, option := range options {
@@ -68,6 +74,7 @@ func New(options ...Option) (*Client, error) {
 		}
 	}
 	config.Retry = normalizeRetryConfig(config.Retry)
+	config.CircuitBreaker = normalizeCircuitBreakerConfig(config.CircuitBreaker)
 
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -91,6 +98,12 @@ func New(options ...Option) (*Client, error) {
 		doer = &retryDoer{
 			next:   doer,
 			config: *config.Retry,
+		}
+	}
+	if config.CircuitBreaker != nil {
+		doer = &circuitBreakerDoer{
+			next:    doer,
+			breaker: newCircuitBreaker(*config.CircuitBreaker),
 		}
 	}
 	doer, err = config.operationDoer(doer)
@@ -202,6 +215,7 @@ func WithConfig(config Config) Option {
 		*current = config
 		current.Middleware = append([]Middleware(nil), config.Middleware...)
 		current.Retry = cloneRetryConfig(config.Retry)
+		current.CircuitBreaker = cloneCircuitBreakerConfig(config.CircuitBreaker)
 		return nil
 	}
 }
@@ -225,6 +239,15 @@ func WithRequestIDHeader(name string) Option {
 func WithRetry(config RetryConfig) Option {
 	return func(current *Config) error {
 		current.Retry = normalizeRetryConfig(&config)
+		return nil
+	}
+}
+
+// WithCircuitBreaker enables a circuit breaker. It observes one complete
+// logical operation, including all retries configured for that operation.
+func WithCircuitBreaker(config CircuitBreakerConfig) Option {
+	return func(current *Config) error {
+		current.CircuitBreaker = normalizeCircuitBreakerConfig(&config)
 		return nil
 	}
 }
@@ -283,6 +306,11 @@ func (config Config) validate() error {
 			return fmt.Errorf("%w: retry: %v", ErrInvalidConfig, err)
 		}
 	}
+	if config.CircuitBreaker != nil {
+		if err := config.CircuitBreaker.validate(); err != nil {
+			return fmt.Errorf("%w: circuit breaker: %v", ErrInvalidConfig, err)
+		}
+	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {
 			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
@@ -292,6 +320,14 @@ func (config Config) validate() error {
 }
 
 func cloneRetryConfig(config *RetryConfig) *RetryConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
+}
+
+func cloneCircuitBreakerConfig(config *CircuitBreakerConfig) *CircuitBreakerConfig {
 	if config == nil {
 		return nil
 	}
