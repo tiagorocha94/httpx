@@ -26,8 +26,12 @@ type Middleware func(next HTTPDoer) HTTPDoer
 type operationContextKey struct{}
 
 type operationState struct {
-	startedAt time.Time
-	attempts  atomic.Uint64
+	startedAt       time.Time
+	attempts        atomic.Uint64
+	requestID       string
+	requestIDHeader string
+	hooks           Hooks
+	event           OperationEvent
 }
 
 type operationBody struct {
@@ -75,10 +79,41 @@ type operationRoundTripper struct {
 }
 
 func (transport *operationRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	if operation := operationFromContext(request.Context()); operation != nil {
-		operation.attempts.Add(1)
+	operation := operationFromContext(request.Context())
+	if operation == nil {
+		return transport.next.RoundTrip(request)
 	}
-	return transport.next.RoundTrip(request)
+
+	attemptRequest := request.Clone(request.Context())
+	if attemptRequest.Header == nil {
+		attemptRequest.Header = make(http.Header)
+	}
+	if operation.requestID != "" {
+		attemptRequest.Header.Set(operation.requestIDHeader, operation.requestID)
+	}
+
+	attempt := int(operation.attempts.Add(1))
+	event := AttemptEvent{
+		OperationEvent: operationEvent(attemptRequest, operation.requestID),
+		Attempt:        attempt,
+	}
+	if operation.hooks.BeforeAttempt != nil {
+		operation.hooks.BeforeAttempt(event)
+	}
+	startedAt := time.Now()
+	response, err := transport.next.RoundTrip(attemptRequest)
+	if operation.hooks.AfterAttempt != nil {
+		result := AttemptResult{
+			AttemptEvent: event,
+			Duration:     time.Since(startedAt),
+			Err:          err,
+		}
+		if response != nil {
+			result.StatusCode = response.StatusCode
+		}
+		operation.hooks.AfterAttempt(result)
+	}
+	return response, err
 }
 
 func (transport *operationRoundTripper) CloseIdleConnections() {
