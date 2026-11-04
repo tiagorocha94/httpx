@@ -96,8 +96,11 @@ context error.
 The logical middleware chain wraps the circuit breaker, which wraps retry
 execution. The breaker admits or rejects once per logical operation and
 classifies only the final result after retries are complete. A retryable
-failure followed by success is counted as a successful operation. Operation
-hooks wrap the middleware chain, while attempt hooks observe each transport
-exchange inside retries and redirects. Future attempt-level controls such as
-rate limiting should apply to each transport attempt; their rejections must
-not be counted as downstream failures by the breaker.
+failure followed by success is counted as a successful operation. The optional
+rate limiter applies at the transport-attempt boundary inside retries and
+redirects. Each admitted transport exchange consumes one token; a rejection
+does not start an attempt and is not retried. Operation hooks wrap the
+middleware chain, while attempt hooks observe transport exchanges admitted by
+the rate limiter. Rate-limit rejections are policy rejections and are not
+counted as downstream failures by the breaker. See
+[Rate limiting](RATE_LIMITING.md) for details.

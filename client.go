@@ -22,6 +22,10 @@ var ErrRetryExhausted = errors.New("httpx: retry attempts exhausted")
 // circuit breaker was open or its half-open capacity was full.
 var ErrCircuitBreakerOpen = errors.New("httpx: circuit breaker is open")
 
+// ErrRateLimitExceeded indicates that a request was rejected because no
+// token was available in the configured rate limiter.
+var ErrRateLimitExceeded = errors.New("httpx: rate limit exceeded")
+
 // Config contains immutable settings used to construct a Client.
 //
 // Transport is cloned during construction. RoundTripper is used as provided
@@ -41,6 +45,8 @@ type Config struct {
 	Retry *RetryConfig
 	// CircuitBreaker contains the breaker policy. A nil value disables it.
 	CircuitBreaker *CircuitBreakerConfig
+	// RateLimit contains the attempt-level rate limit. A nil value disables it.
+	RateLimit *RateLimitConfig
 }
 
 // Option configures a Client.
@@ -75,6 +81,7 @@ func New(options ...Option) (*Client, error) {
 	}
 	config.Retry = normalizeRetryConfig(config.Retry)
 	config.CircuitBreaker = normalizeCircuitBreakerConfig(config.CircuitBreaker)
+	config.RateLimit = cloneRateLimitConfig(config.RateLimit)
 
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -91,7 +98,10 @@ func New(options ...Option) (*Client, error) {
 	}
 
 	httpClient := &http.Client{
-		Transport: &operationRoundTripper{next: roundTripper},
+		Transport: &operationRoundTripper{
+			next:    roundTripper,
+			limiter: newRateLimiter(config.RateLimit),
+		},
 	}
 	var doer HTTPDoer = httpClient
 	if config.Retry != nil {
@@ -216,6 +226,7 @@ func WithConfig(config Config) Option {
 		current.Middleware = append([]Middleware(nil), config.Middleware...)
 		current.Retry = cloneRetryConfig(config.Retry)
 		current.CircuitBreaker = cloneCircuitBreakerConfig(config.CircuitBreaker)
+		current.RateLimit = cloneRateLimitConfig(config.RateLimit)
 		return nil
 	}
 }
@@ -248,6 +259,16 @@ func WithRetry(config RetryConfig) Option {
 func WithCircuitBreaker(config CircuitBreakerConfig) Option {
 	return func(current *Config) error {
 		current.CircuitBreaker = normalizeCircuitBreakerConfig(&config)
+		return nil
+	}
+}
+
+// WithRateLimit enables a client-scoped token-bucket rate limit for individual
+// transport attempts. Requests that exceed the available burst are rejected
+// immediately with ErrRateLimitExceeded.
+func WithRateLimit(config RateLimitConfig) Option {
+	return func(current *Config) error {
+		current.RateLimit = cloneRateLimitConfig(&config)
 		return nil
 	}
 }
@@ -311,6 +332,11 @@ func (config Config) validate() error {
 			return fmt.Errorf("%w: circuit breaker: %v", ErrInvalidConfig, err)
 		}
 	}
+	if config.RateLimit != nil {
+		if err := config.RateLimit.validate(); err != nil {
+			return fmt.Errorf("%w: rate limit: %v", ErrInvalidConfig, err)
+		}
+	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {
 			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
@@ -328,6 +354,14 @@ func cloneRetryConfig(config *RetryConfig) *RetryConfig {
 }
 
 func cloneCircuitBreakerConfig(config *CircuitBreakerConfig) *CircuitBreakerConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
+}
+
+func cloneRateLimitConfig(config *RateLimitConfig) *RateLimitConfig {
 	if config == nil {
 		return nil
 	}
