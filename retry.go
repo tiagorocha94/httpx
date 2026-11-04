@@ -116,6 +116,9 @@ func (doer *retryDoer) Do(request *http.Request) (*http.Response, error) {
 }
 
 func (doer *retryDoer) retryable(request *http.Request, response *http.Response, err error) bool {
+	if isPolicyRejection(err) {
+		return false
+	}
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return false
 	}

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,13 +76,22 @@ func operationFromContext(ctx context.Context) *operationState {
 }
 
 type operationRoundTripper struct {
-	next http.RoundTripper
+	next    http.RoundTripper
+	limiter *rateLimiter
 }
 
 func (transport *operationRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	operation := operationFromContext(request.Context())
 	if operation == nil {
 		return transport.next.RoundTrip(request)
+	}
+	if transport.limiter != nil {
+		if err := transport.limiter.allow(request.Context()); err != nil {
+			if errors.Is(err, ErrRateLimitExceeded) {
+				return nil, newPolicyRejection(err)
+			}
+			return nil, err
+		}
 	}
 
 	attemptRequest := request.Clone(request.Context())
