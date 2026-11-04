@@ -18,6 +18,7 @@ func TestRateLimiterAllowsBurstAndRefills(t *testing.T) {
 		Burst:             2,
 	})
 	limiter.now = func() time.Time { return now }
+	limiter.last = now
 
 	for i := 0; i < 2; i++ {
 		if err := limiter.allow(context.Background()); err != nil {
@@ -193,6 +194,7 @@ func TestRateLimitRejectionDoesNotTripCircuitBreaker(t *testing.T) {
 	}
 	transport := client.client.Transport.(*operationRoundTripper)
 	transport.limiter.now = func() time.Time { return now }
+	transport.limiter.last = now
 
 	response, err := client.Do(retryTestRequest(t, http.MethodGet, nil))
 	if err != nil {
