@@ -12,8 +12,8 @@ standard Go request and response behavior.
 HTTPX is in early development. It currently provides a configurable HTTP
 client with timeout, transport injection, logical-operation middleware,
 request IDs, lifecycle hooks, opt-in retries, an opt-in circuit breaker, an
-opt-in per-attempt rate limit, and an opt-in logical-operation bulkhead.
-Integrated observability is planned but not yet implemented.
+opt-in per-attempt rate limit, an opt-in logical-operation bulkhead, and
+optional structured logs.
 
 ## Intended scope
 
@@ -37,6 +37,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -47,6 +48,10 @@ func main() {
 	client, err := httpx.New(
 		httpx.WithTimeout(10*time.Second),
 		httpx.WithRequestIDHeader("X-Correlation-ID"),
+		httpx.WithLogging(httpx.LoggingConfig{
+			Logger:     slog.Default(),
+			Dependency: "example-service",
+		}),
 		httpx.WithHooks(httpx.Hooks{
 			AfterOperation: func(result httpx.OperationResult) {
 				log.Printf(
@@ -139,6 +144,21 @@ client, err := httpx.New(httpx.WithBulkhead(httpx.BulkheadConfig{
 
 Waiting for capacity observes the request context. See
 [Bulkhead](docs/BULKHEAD.md) for permit scope and lifecycle.
+
+Optional `log/slog` logging records logical operations and individual
+transport attempts. Logs include only the URL origin and never include request
+or response bodies:
+
+```go
+client, err := httpx.New(httpx.WithLogging(httpx.LoggingConfig{
+	Logger:     slog.Default(),
+	Dependency: "payments",
+	Level:      slog.LevelInfo,
+}))
+```
+
+See [Logging](docs/LOGGING.md) for fields, error classification, and sensitive
+data handling.
 
 ## Development
 

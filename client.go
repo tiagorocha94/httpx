@@ -50,6 +50,9 @@ type Config struct {
 	// Bulkhead contains the logical-operation concurrency limit. A nil value
 	// disables it.
 	Bulkhead *BulkheadConfig
+	// Logging contains structured logging configuration. A nil value disables
+	// logging.
+	Logging *LoggingConfig
 }
 
 // Option configures a Client.
@@ -65,14 +68,15 @@ type Client struct {
 	timeout         time.Duration
 	requestIDHeader string
 	hooks           Hooks
+	logging         *LoggingConfig
 }
 
 // New constructs a Client using the supplied options.
 //
 // The default transport is cloned from http.DefaultTransport when it is an
 // *http.Transport, so the Client owns an independently configured transport.
-// Retry, circuit-breaker, rate-limit, and bulkhead policies are disabled by
-// default.
+// Retry, circuit-breaker, rate-limit, bulkhead, and logging features are
+// disabled by default.
 func New(options ...Option) (*Client, error) {
 	config := Config{}
 	for i, option := range options {
@@ -87,6 +91,7 @@ func New(options ...Option) (*Client, error) {
 	config.CircuitBreaker = normalizeCircuitBreakerConfig(config.CircuitBreaker)
 	config.RateLimit = cloneRateLimitConfig(config.RateLimit)
 	config.Bulkhead = cloneBulkheadConfig(config.Bulkhead)
+	config.Logging = cloneLoggingConfig(config.Logging)
 
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -138,6 +143,7 @@ func New(options ...Option) (*Client, error) {
 		timeout:         config.Timeout,
 		requestIDHeader: config.RequestIDHeader,
 		hooks:           config.Hooks,
+		logging:         config.Logging,
 	}, nil
 }
 
@@ -157,6 +163,7 @@ func (c *Client) Do(request *http.Request) (*http.Response, error) {
 		requestID:       requestID,
 		requestIDHeader: c.requestIDHeader,
 		hooks:           c.hooks,
+		logger:          c.logging,
 		event:           operationEvent(request, requestID),
 	}
 	var ctx context.Context
@@ -239,6 +246,7 @@ func WithConfig(config Config) Option {
 		current.CircuitBreaker = cloneCircuitBreakerConfig(config.CircuitBreaker)
 		current.RateLimit = cloneRateLimitConfig(config.RateLimit)
 		current.Bulkhead = cloneBulkheadConfig(config.Bulkhead)
+		current.Logging = cloneLoggingConfig(config.Logging)
 		return nil
 	}
 }
@@ -291,6 +299,15 @@ func WithRateLimit(config RateLimitConfig) Option {
 func WithBulkhead(config BulkheadConfig) Option {
 	return func(current *Config) error {
 		current.Bulkhead = cloneBulkheadConfig(&config)
+		return nil
+	}
+}
+
+// WithLogging enables structured operation and attempt logs using log/slog.
+// The dependency name must be a non-empty, non-sensitive identifier.
+func WithLogging(config LoggingConfig) Option {
+	return func(current *Config) error {
+		current.Logging = cloneLoggingConfig(&config)
 		return nil
 	}
 }
@@ -364,6 +381,11 @@ func (config Config) validate() error {
 			return fmt.Errorf("%w: bulkhead: %v", ErrInvalidConfig, err)
 		}
 	}
+	if config.Logging != nil {
+		if err := config.Logging.validate(); err != nil {
+			return fmt.Errorf("%w: logging: %v", ErrInvalidConfig, err)
+		}
+	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {
 			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
@@ -397,6 +419,14 @@ func cloneRateLimitConfig(config *RateLimitConfig) *RateLimitConfig {
 }
 
 func cloneBulkheadConfig(config *BulkheadConfig) *BulkheadConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
+}
+
+func cloneLoggingConfig(config *LoggingConfig) *LoggingConfig {
 	if config == nil {
 		return nil
 	}

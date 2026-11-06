@@ -32,6 +32,7 @@ type operationState struct {
 	requestID       string
 	requestIDHeader string
 	hooks           Hooks
+	logger          *LoggingConfig
 	event           OperationEvent
 }
 
@@ -112,16 +113,26 @@ func (transport *operationRoundTripper) RoundTrip(request *http.Request) (*http.
 	}
 	startedAt := time.Now()
 	response, err := transport.next.RoundTrip(attemptRequest)
-	if operation.hooks.AfterAttempt != nil {
-		result := AttemptResult{
-			AttemptEvent: event,
-			Duration:     time.Since(startedAt),
-			Err:          err,
+	if operation.hooks.AfterAttempt != nil || operation.logger != nil {
+		duration := time.Since(startedAt)
+		if operation.hooks.AfterAttempt != nil {
+			result := AttemptResult{
+				AttemptEvent: event,
+				Duration:     duration,
+				Err:          err,
+			}
+			if response != nil {
+				result.StatusCode = response.StatusCode
+			}
+			operation.hooks.AfterAttempt(result)
 		}
-		if response != nil {
-			result.StatusCode = response.StatusCode
+		if operation.logger != nil {
+			statusCode := 0
+			if response != nil {
+				statusCode = response.StatusCode
+			}
+			logAttempt(operation.logger, event, statusCode, err, duration)
 		}
-		operation.hooks.AfterAttempt(result)
 	}
 	return response, err
 }
