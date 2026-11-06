@@ -11,9 +11,9 @@ standard Go request and response behavior.
 
 HTTPX is in early development. It currently provides a configurable HTTP
 client with timeout, transport injection, logical-operation middleware,
-request IDs, lifecycle hooks, opt-in retries, an opt-in circuit breaker, and an
-opt-in per-attempt rate limit. Bulkheads and integrated observability are
-planned but not yet implemented.
+request IDs, lifecycle hooks, opt-in retries, an opt-in circuit breaker, an
+opt-in per-attempt rate limit, and an opt-in logical-operation bulkhead.
+Integrated observability is planned but not yet implemented.
 
 ## Intended scope
 
@@ -127,6 +127,18 @@ client, err := httpx.New(httpx.WithRateLimit(httpx.RateLimitConfig{
 
 See [Rate limiting](docs/RATE_LIMITING.md) for token-bucket behavior,
 rejections, and how limits apply to retries and redirects.
+
+An optional per-client bulkhead bounds concurrent logical operations. A permit
+is held until the response body is read to completion or closed:
+
+```go
+client, err := httpx.New(httpx.WithBulkhead(httpx.BulkheadConfig{
+	MaxConcurrent: 20,
+}))
+```
+
+Waiting for capacity observes the request context. See
+[Bulkhead](docs/BULKHEAD.md) for permit scope and lifecycle.
 
 ## Development
 
