@@ -47,6 +47,9 @@ type Config struct {
 	CircuitBreaker *CircuitBreakerConfig
 	// RateLimit contains the attempt-level rate limit. A nil value disables it.
 	RateLimit *RateLimitConfig
+	// Bulkhead contains the logical-operation concurrency limit. A nil value
+	// disables it.
+	Bulkhead *BulkheadConfig
 }
 
 // Option configures a Client.
@@ -68,7 +71,8 @@ type Client struct {
 //
 // The default transport is cloned from http.DefaultTransport when it is an
 // *http.Transport, so the Client owns an independently configured transport.
-// Retry and circuit-breaker policies are disabled by default.
+// Retry, circuit-breaker, rate-limit, and bulkhead policies are disabled by
+// default.
 func New(options ...Option) (*Client, error) {
 	config := Config{}
 	for i, option := range options {
@@ -82,6 +86,7 @@ func New(options ...Option) (*Client, error) {
 	config.Retry = normalizeRetryConfig(config.Retry)
 	config.CircuitBreaker = normalizeCircuitBreakerConfig(config.CircuitBreaker)
 	config.RateLimit = cloneRateLimitConfig(config.RateLimit)
+	config.Bulkhead = cloneBulkheadConfig(config.Bulkhead)
 
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -114,6 +119,12 @@ func New(options ...Option) (*Client, error) {
 		doer = &circuitBreakerDoer{
 			next:    doer,
 			breaker: newCircuitBreaker(*config.CircuitBreaker),
+		}
+	}
+	if config.Bulkhead != nil {
+		doer = &bulkheadDoer{
+			next:     doer,
+			bulkhead: newBulkhead(*config.Bulkhead),
 		}
 	}
 	doer, err = config.operationDoer(doer)
@@ -227,6 +238,7 @@ func WithConfig(config Config) Option {
 		current.Retry = cloneRetryConfig(config.Retry)
 		current.CircuitBreaker = cloneCircuitBreakerConfig(config.CircuitBreaker)
 		current.RateLimit = cloneRateLimitConfig(config.RateLimit)
+		current.Bulkhead = cloneBulkheadConfig(config.Bulkhead)
 		return nil
 	}
 }
@@ -269,6 +281,16 @@ func WithCircuitBreaker(config CircuitBreakerConfig) Option {
 func WithRateLimit(config RateLimitConfig) Option {
 	return func(current *Config) error {
 		current.RateLimit = cloneRateLimitConfig(&config)
+		return nil
+	}
+}
+
+// WithBulkhead enables a client-scoped concurrency limit for logical
+// operations. Acquisition waits until capacity is available or the request
+// context is canceled.
+func WithBulkhead(config BulkheadConfig) Option {
+	return func(current *Config) error {
+		current.Bulkhead = cloneBulkheadConfig(&config)
 		return nil
 	}
 }
@@ -337,6 +359,11 @@ func (config Config) validate() error {
 			return fmt.Errorf("%w: rate limit: %v", ErrInvalidConfig, err)
 		}
 	}
+	if config.Bulkhead != nil {
+		if err := config.Bulkhead.validate(); err != nil {
+			return fmt.Errorf("%w: bulkhead: %v", ErrInvalidConfig, err)
+		}
+	}
 	for i, middleware := range config.Middleware {
 		if middleware == nil {
 			return fmt.Errorf("%w: middleware %d is nil", ErrInvalidConfig, i)
@@ -362,6 +389,14 @@ func cloneCircuitBreakerConfig(config *CircuitBreakerConfig) *CircuitBreakerConf
 }
 
 func cloneRateLimitConfig(config *RateLimitConfig) *RateLimitConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
+}
+
+func cloneBulkheadConfig(config *BulkheadConfig) *BulkheadConfig {
 	if config == nil {
 		return nil
 	}
