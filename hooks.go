@@ -118,7 +118,7 @@ func operationEvent(request *http.Request, requestID string) OperationEvent {
 }
 
 func (operation *operationState) finish(response *http.Response, err error) {
-	if operation.hooks.AfterOperation == nil {
+	if operation.hooks.AfterOperation == nil && operation.logger == nil {
 		return
 	}
 	result := OperationResult{
@@ -129,5 +129,8 @@ func (operation *operationState) finish(response *http.Response, err error) {
 	if response != nil {
 		result.StatusCode = response.StatusCode
 	}
-	operation.hooks.AfterOperation(result)
+	if operation.hooks.AfterOperation != nil {
+		operation.hooks.AfterOperation(result)
+	}
+	logOperation(operation.logger, result, int(operation.attempts.Load()))
 }
